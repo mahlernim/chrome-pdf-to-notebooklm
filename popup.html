@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=360">
+  <title>chrome-pdf-to-notebooklm</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --surface: #ffffff;
+      --surface-alt: #eef1f6;
+      --accent: #e94560;
+      --accent-glow: rgba(233, 69, 96, 0.18);
+      --text: #1e2a3a;
+      --text-dim: #6b7a8d;
+      --success: #0fad6e;
+      --warning: #e8a200;
+      --error: #e03e3e;
+      --border: rgba(0, 0, 0, 0.08);
+      --radius: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 360px;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--accent), #ff6b8a);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      box-shadow: 0 2px 8px var(--accent-glow);
+      flex-shrink: 0;
+    }
+
+    .header-text {
+      flex: 1;
+    }
+
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+
+    .header .subtitle {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .btn-gear {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 17px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      color: var(--text-dim);
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .btn-gear:hover,
+    .btn-gear.active {
+      background: var(--surface-alt);
+      color: var(--text);
+    }
+
+    /* ---- PDF info ---- */
+    .pdf-info {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 12px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+    }
+
+    .pdf-info .label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .pdf-url {
+      font-size: 12px;
+      word-break: break-all;
+      line-height: 1.4;
+      max-height: 60px;
+      overflow: hidden;
+    }
+
+    .pdf-source {
+      font-size: 10px;
+      color: var(--accent);
+      margin-top: 4px;
+    }
+
+    .no-pdf {
+      text-align: center;
+      padding: 24px 16px;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .no-pdf .icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+      opacity: 0.5;
+    }
+
+    /* ---- Notebook title bar ---- */
+    .notebook-title-bar {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .notebook-title-bar .nb-icon {
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .notebook-title-bar .nb-title {
+      font-size: 12px;
+      font-weight: 500;
+      flex: 1;
+      word-break: break-word;
+      line-height: 1.4;
+    }
+
+    .notebook-title-bar .nb-label {
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    /* ---- Buttons ---- */
+    .btn-generate {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, var(--accent), #ff6b8a);
+      border: none;
+      border-radius: var(--radius);
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 3px 12px var(--accent-glow);
+      letter-spacing: 0.3px;
+    }
+
+    .btn-generate:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px var(--accent-glow);
+    }
+
+    .btn-generate:active {
+      transform: translateY(0);
+    }
+
+    .btn-generate:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-secondary {
+      width: 100%;
+      padding: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-dim);
+      font-size: 11px;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: all 0.2s;
+    }
+
+    .btn-secondary:hover {
+      background: var(--surface-alt);
+      color: var(--text);
+    }
+
+    /* ---- Pipeline ---- */
+    .pipeline {
+      margin-top: 14px;
+    }
+
+    .pipeline-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 0;
+      font-size: 12px;
+    }
+
+    .step-indicator {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .step-indicator.pending {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    .step-indicator.active {
+      background: var(--accent);
+      border: 1.5px solid var(--accent);
+      color: white;
+      animation: pulse 1.5s infinite;
+    }
+
+    .step-indicator.done {
+      background: var(--success);
+      border: 1.5px solid var(--success);
+      color: white;
+    }
+
+    .step-indicator.error {
+      background: var(--error);
+      border: 1.5px solid var(--error);
+      color: white;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 var(--accent-glow);
+      }
+
+      50% {
+        box-shadow: 0 0 0 4px var(--accent-glow);
+      }
+    }
+
+    .step-content {
+      flex: 1;
+    }
+
+    .step-name {
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .step-detail {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 2px;
+      line-height: 1.3;
+    }
+
+    .notebook-link {
+      display: block;
+      text-align: center;
+      padding: 10px;
+      background: var(--surface-alt);
+      border-radius: var(--radius);
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 500;
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      transition: all 0.2s;
+    }
+
+    .notebook-link:hover {
+      background: var(--accent);
+      color: white;
+    }
+
+    .completed-box {
+      text-align: center;
+      padding: 16px;
+      background: linear-gradient(135deg, rgba(0, 214, 143, 0.1), rgba(0, 214, 143, 0.05));
+      border-radius: var(--radius);
+      border: 1px solid rgba(0, 214, 143, 0.2);
+      margin-top: 12px;
+    }
+
+    .completed-box .icon {
+      font-size: 28px;
+      margin-bottom: 6px;
+    }
+
+    .completed-box .msg {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--success);
+    }
+
+    /* ========================================
+       SETTINGS PANEL
+       ======================================== */
+    #settings-panel {
+      display: none;
+      margin-bottom: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    #settings-panel.open {
+      display: block;
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-alt);
+    }
+
+    .settings-header-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      flex: 1;
+    }
+
+    /* Artifact warning */
+    #artifact-warning {
+      display: none;
+      margin: 8px 14px 0;
+      padding: 6px 10px;
+      background: rgba(232, 162, 0, 0.12);
+      border: 1px solid rgba(232, 162, 0, 0.3);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--warning);
+    }
+
+    .settings-inner {
+      padding: 4px 14px 4px;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+
+    .settings-inner::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .settings-inner::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    .settings-footer {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-alt);
+    }
+
+    .btn-save-close {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--success);
+      border: none;
+      border-radius: 7px;
+      color: white;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .btn-save-close:hover {
+      opacity: 0.88;
+    }
+
+    /* ---- Section ---- */
+    .s-section {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .s-section:last-child {
+      border-bottom: none;
+    }
+
+    /*
+     * Header row: [title]  [toggle]  [arrow]
+     * The toggle and arrow are grouped on the right.
+     * Only the non-toggle part of the header triggers expand/collapse.
+     */
+    .s-section-header {
+      display: flex;
+      align-items: center;
+      padding: 9px 0;
+      cursor: pointer;
+      user-select: none;
+      gap: 6px;
+    }
+
+    .s-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: var(--text-dim);
+      flex: 1;
+      transition: color 0.15s;
+    }
+
+    .s-section-header:hover .s-section-title {
+      color: var(--text);
+    }
+
+    .s-section-arrow {
+      font-size: 12px;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    /* Collapsible content */
+    .s-section-content {
+      display: none;
+      padding-bottom: 10px;
+    }
+
+    .s-section.expanded>.s-section-content {
+      display: block;
+    }
+
+    /* Toggle switch -- shared style */
+    .toggle-switch {
+      position: relative;
+      width: 34px;
+      height: 19px;
+      flex-shrink: 0;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: #cdd2d9;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: white;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    input:checked+.toggle-track {
+      background: var(--accent);
+    }
+
+    input:checked+.toggle-track::after {
+      transform: translateX(15px);
+    }
+
+    /* The toggle inside the header -- clicking it does NOT expand/collapse */
+    .s-header-toggle {
+      cursor: default;
+    }
+
+    .s-header-toggle .toggle-track {
+      cursor: pointer;
+    }
+
+    /* Form controls */
+    .s-field {
+      margin-bottom: 8px;
+    }
+
+    .s-field:last-child {
+      margin-bottom: 0;
+    }
+
+    .s-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 3px;
+      display: block;
+    }
+
+    .s-select,
+    .s-textarea {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+
+    .s-select:focus,
+    .s-textarea:focus {
+      border-color: rgba(233, 69, 96, 0.5);
+    }
+
+    .s-textarea {
+      resize: vertical;
+      min-height: 50px;
+      line-height: 1.4;
+    }
+
+    /* Radio chips */
+    .s-radio-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .s-radio-option {
+      display: none;
+    }
+
+    .s-radio-option+label {
+      padding: 4px 9px;
+      font-size: 11px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      background: var(--bg);
+      color: var(--text-dim);
+      transition: all 0.15s;
+    }
+
+    .s-radio-option:checked+label {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    /* Simple toggle rows (inside content) */
+    .s-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .s-toggle-label {
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    /* Separator */
+    .s-sep {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 8px 0;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-icon">🎧</div>
+    <div class="header-text">
+      <h1>chrome-pdf-to-notebooklm</h1>
+      <div class="subtitle">Auto-generate audio &amp; artifacts</div>
+    </div>
+    <button class="btn-gear" id="btn-gear" title="Settings">⚙️</button>
+  </div>
+
+  <!-- SETTINGS PANEL -->
+  <div id="settings-panel" role="region" aria-label="Settings">
+
+    <div class="settings-header">
+      <span class="settings-header-title">⚙️ Artifact Settings</span>
+    </div>
+
+    <div id="artifact-warning">⚠️ At least one artifact must be enabled.</div>
+
+    <div class="settings-inner">
+
+      <!-- ================== AUDIO ================== -->
+      <!-- expanded by default -->
+      <div class="s-section expanded" id="sec-audio">
+        <div class="s-section-header" data-section="sec-audio">
+          <span class="s-section-title">🎧 Audio</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateAudio" checked>
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▾</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Format</span>
+            <select id="s-audioFormat" class="s-select">
+              <option value="deep_dive">Deep Dive</option>
+              <option value="brief">Brief</option>
+              <option value="critique">Critique</option>
+              <option value="debate">Debate</option>
+            </select>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Length</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="audioLength" id="al-short" value="short"><label
+                for="al-short">Short</label>
+              <input class="s-radio-option" type="radio" name="audioLength" id="al-default" value="default"><label
+                for="al-default">Default</label>
+              <input class="s-radio-option" type="radio" name="audioLength" id="al-long" value="long"><label
+                for="al-long">Long</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Language</span>
+            <select id="s-language" class="s-select">
+              <option value="en">English</option>
+              <option value="ko">Korean</option>
+              <option value="ja">Japanese</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+            </select>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Custom instructions</span>
+            <textarea id="s-audioPrompt" class="s-textarea"
+              placeholder="e.g. Focus on methodology and summarize key findings simply."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== VIDEO ================== -->
+      <div class="s-section" id="sec-video">
+        <div class="s-section-header" data-section="sec-video">
+          <span class="s-section-title">🎬 Video</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateVideo">
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▸</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Format</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="videoFormat" id="vf-explainer" value="explainer"><label
+                for="vf-explainer">Explainer</label>
+              <input class="s-radio-option" type="radio" name="videoFormat" id="vf-brief" value="brief"><label
+                for="vf-brief">Brief</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Visual style</span>
+            <select id="s-videoStyle" class="s-select">
+              <option value="auto">Auto Select</option>
+              <option value="classic">Classic</option>
+              <option value="whiteboard">Whiteboard</option>
+              <option value="kawaii">Kawaii</option>
+              <option value="anime">Anime</option>
+              <option value="watercolor">Watercolor</option>
+              <option value="retro_print">Retro Print</option>
+              <option value="heritage">Heritage</option>
+              <option value="paper_craft">Paper Craft</option>
+            </select>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Custom instructions</span>
+            <textarea id="s-videoPrompt" class="s-textarea"
+              placeholder="e.g. Use a documentary style with emphasis on visuals."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== REPORT ================== -->
+      <div class="s-section" id="sec-report">
+        <div class="s-section-header" data-section="sec-report">
+          <span class="s-section-title">📄 Report</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateReport">
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▸</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Format</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="reportFormat" id="rf-briefing"
+                value="briefing_doc"><label for="rf-briefing">Briefing Doc</label>
+              <input class="s-radio-option" type="radio" name="reportFormat" id="rf-study" value="study_guide"><label
+                for="rf-study">Study Guide</label>
+              <input class="s-radio-option" type="radio" name="reportFormat" id="rf-blog" value="blog_post"><label
+                for="rf-blog">Blog Post</label>
+              <input class="s-radio-option" type="radio" name="reportFormat" id="rf-custom" value="custom"><label
+                for="rf-custom">Custom</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Custom instructions <span id="report-prompt-required"
+                style="color:var(--warning);display:none">(required for Custom format)</span></span>
+            <textarea id="s-reportPrompt" class="s-textarea"
+              placeholder="e.g. Write a clinical summary for non-specialist physicians."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== QUIZ ================== -->
+      <div class="s-section" id="sec-quiz">
+        <div class="s-section-header" data-section="sec-quiz">
+          <span class="s-section-title">❓ Quiz</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateQuiz">
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▸</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Quantity</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="quizQuantity" id="qq-fewer" value="fewer"><label
+                for="qq-fewer">Fewer</label>
+              <input class="s-radio-option" type="radio" name="quizQuantity" id="qq-standard" value="standard"><label
+                for="qq-standard">Standard</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Difficulty</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="quizDifficulty" id="qd-easy" value="easy"><label
+                for="qd-easy">Easy</label>
+              <input class="s-radio-option" type="radio" name="quizDifficulty" id="qd-med" value="medium"><label
+                for="qd-med">Medium</label>
+              <input class="s-radio-option" type="radio" name="quizDifficulty" id="qd-hard" value="hard"><label
+                for="qd-hard">Hard</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Custom instructions</span>
+            <textarea id="s-quizPrompt" class="s-textarea"
+              placeholder="e.g. Focus on clinical reasoning for medical students."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== FLASHCARDS ================== -->
+      <div class="s-section" id="sec-flashcards">
+        <div class="s-section-header" data-section="sec-flashcards">
+          <span class="s-section-title">🃏 Flashcards</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateFlashcards">
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▸</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Custom instructions</span>
+            <textarea id="s-flashcardsPrompt" class="s-textarea"
+              placeholder="e.g. Emphasize key terms and definitions."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== INFOGRAPHIC ================== -->
+      <div class="s-section" id="sec-infographic">
+        <div class="s-section-header" data-section="sec-infographic">
+          <span class="s-section-title">🖼 Infographic</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateInfographic">
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▸</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Orientation</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="infographicOrientation" id="io-landscape"
+                value="landscape"><label for="io-landscape">Landscape</label>
+              <input class="s-radio-option" type="radio" name="infographicOrientation" id="io-portrait"
+                value="portrait"><label for="io-portrait">Portrait</label>
+              <input class="s-radio-option" type="radio" name="infographicOrientation" id="io-square"
+                value="square"><label for="io-square">Square</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Detail</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="infographicDetail" id="id-concise" value="concise"><label
+                for="id-concise">Concise</label>
+              <input class="s-radio-option" type="radio" name="infographicDetail" id="id-standard"
+                value="standard"><label for="id-standard">Standard</label>
+              <input class="s-radio-option" type="radio" name="infographicDetail" id="id-detailed"
+                value="detailed"><label for="id-detailed">Detailed</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Custom instructions</span>
+            <textarea id="s-infographicPrompt" class="s-textarea"
+              placeholder="e.g. Use a horizontal timeline layout with large icons."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== SLIDE DECK ================== -->
+      <div class="s-section" id="sec-slidedeck">
+        <div class="s-section-header" data-section="sec-slidedeck">
+          <span class="s-section-title">📊 Slide Deck</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateSlideDeck">
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▸</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Format</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="slideDeckFormat" id="sdf-detail"
+                value="detailed_deck"><label for="sdf-detail">Detailed</label>
+              <input class="s-radio-option" type="radio" name="slideDeckFormat" id="sdf-presenter"
+                value="presenter_slides"><label for="sdf-presenter">Presenter</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Length</span>
+            <div class="s-radio-group">
+              <input class="s-radio-option" type="radio" name="slideDeckLength" id="sdl-default" value="default"><label
+                for="sdl-default">Default</label>
+              <input class="s-radio-option" type="radio" name="slideDeckLength" id="sdl-short" value="short"><label
+                for="sdl-short">Short</label>
+            </div>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Custom instructions</span>
+            <textarea id="s-slideDeckPrompt" class="s-textarea"
+              placeholder="e.g. Design for a 15-minute conference presentation."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== MIND MAP ================== -->
+      <div class="s-section" id="sec-mindmap">
+        <div class="s-section-header" data-section="sec-mindmap">
+          <span class="s-section-title">🧠 Mind Map</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateMindMap">
+            <span class="toggle-track"></span>
+          </label>
+          <!-- no expand arrow: no settings to show -->
+          <span class="s-section-arrow" style="visibility:hidden">▸</span>
+        </div>
+        <!-- No content: toggle is the only setting -->
+      </div>
+
+      <!-- ================== DATA TABLE ================== -->
+      <div class="s-section" id="sec-datatable">
+        <div class="s-section-header" data-section="sec-datatable">
+          <span class="s-section-title">📋 Data Table</span>
+          <label class="toggle-switch s-header-toggle">
+            <input type="checkbox" id="s-generateDataTable">
+            <span class="toggle-track"></span>
+          </label>
+          <span class="s-section-arrow">▸</span>
+        </div>
+        <div class="s-section-content">
+          <div class="s-field">
+            <span class="s-label">Custom instructions</span>
+            <textarea id="s-dataTablePrompt" class="s-textarea"
+              placeholder="e.g. Extract all numerical results into a comparison table."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================== EXPERIENCE ================== -->
+      <div class="s-section expanded" id="sec-ux">
+        <div class="s-section-header" data-section="sec-ux">
+          <span class="s-section-title">✨ Experience</span>
+          <span class="s-section-arrow">▾</span>
+        </div>
+          <div class="s-section-content">
+          <div class="s-toggle-row" style="margin-bottom:8px">
+            <span class="s-toggle-label">Desktop notifications</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="s-notificationEnabled">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <div class="s-toggle-row" style="margin-bottom:8px">
+            <span class="s-toggle-label">Completion chime</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="s-chimeEnabled">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <div class="s-toggle-row">
+            <span class="s-toggle-label">Auto-open notebook when done</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="s-autoOpenNotebook">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /settings-inner -->
+
+    <div class="settings-footer">
+      <button class="btn-save-close" id="btn-save-close">✓ Save Settings</button>
+    </div>
+
+  </div><!-- /settings-panel -->
+
+  <div id="content">
+    <div class="no-pdf">
+      <div class="icon">🔍</div>
+      Scanning page for PDFs...
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>
