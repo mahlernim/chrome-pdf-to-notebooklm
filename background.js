@@ -1,5 +1,5 @@
 /**
- * Background service worker for chrome-pdf-to-notebooklm extension.
+ * Background service worker for Chrome PDF to NotebookLM extension.
  *
  * MV3 SERVICE WORKER LIFETIME
  * Chrome terminates idle service workers after ~30 seconds. Any code that
@@ -970,4 +970,4 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
     }
 });
 
-console.log('[chrome-pdf-to-notebooklm] Service worker loaded');
+console.log('[Chrome PDF to NotebookLM] Service worker loaded');

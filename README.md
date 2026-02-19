@@ -1,4 +1,4 @@
-﻿# chrome-pdf-to-notebooklm
+﻿# Chrome PDF to NotebookLM
 
 Chrome extension to detect PDF/web sources and create a NotebookLM notebook with artifacts (audio, infographic, and more).
 
@@ -9,7 +9,7 @@ Chrome extension to detect PDF/web sources and create a NotebookLM notebook with
 ## 한국어 가이드
 
 ### 1. 개요
-`chrome-pdf-to-notebooklm`은 현재 탭에서 PDF를 찾거나 URL/로컬 파일을 받아 NotebookLM으로 전송하고, 아티팩트 생성을 자동화하는 확장 프로그램입니다.
+`Chrome PDF to NotebookLM`은 현재 탭에서 PDF를 찾거나 URL/로컬 파일을 받아 NotebookLM으로 전송하고, 아티팩트 생성을 자동화하는 확장 프로그램입니다.
 
 ### 2. 설치 (개발자 모드)
 1. 이 저장소를 로컬에 클론/다운로드합니다.
@@ -17,7 +17,7 @@ Chrome extension to detect PDF/web sources and create a NotebookLM notebook with
 3. 우측 상단 `개발자 모드`를 켭니다.
 4. `압축해제된 확장 프로그램을 로드`를 클릭합니다.
 5. 이 폴더(`chrome-extension`)를 선택합니다.
-6. 확장 목록에 `chrome-pdf-to-notebooklm`이 표시되면 설치 완료입니다.
+6. 확장 목록에 `Chrome PDF to NotebookLM`이 표시되면 설치 완료입니다.
 
 ### 3. 활성화 및 권한
 1. 툴바에서 확장 아이콘을 고정(pin)합니다.
@@ -58,7 +58,7 @@ Chrome extension to detect PDF/web sources and create a NotebookLM notebook with
 ## English Guide
 
 ### 1. Overview
-`chrome-pdf-to-notebooklm` detects PDF/web sources from your current tab, sends them to NotebookLM, and automates artifact generation.
+`Chrome PDF to NotebookLM` detects PDF/web sources from your current tab, sends them to NotebookLM, and automates artifact generation.
 
 ### 2. Install (Developer Mode)
 1. Clone or download this repository.
@@ -66,7 +66,7 @@ Chrome extension to detect PDF/web sources and create a NotebookLM notebook with
 3. Enable `Developer mode`.
 4. Click `Load unpacked`.
 5. Select this folder (`chrome-extension`).
-6. Confirm `chrome-pdf-to-notebooklm` appears in your extension list.
+6. Confirm `Chrome PDF to NotebookLM` appears in your extension list.
 
 ### 3. Activate and Permissions
 1. Pin the extension in your Chrome toolbar.
@@ -97,5 +97,11 @@ Chrome extension to detect PDF/web sources and create a NotebookLM notebook with
 - Runtime state/settings are stored in `chrome.storage.local`.
 - To reduce passive page access, always-on `content_scripts` were removed from `manifest.json`; detection script injection now happens on demand from the popup.
 
+## Credits
+- This project's NotebookLM RPC communication was heavily informed by [`teng-lin/notebooklm-py`](https://github.com/teng-lin/notebooklm-py).
+
 ## License
 MIT. See [LICENSE](./LICENSE).
+
+
+
