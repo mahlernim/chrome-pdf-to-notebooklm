@@ -122,6 +122,40 @@ function isLikelyPdfUrl(url) {
     return typeof url === 'string' && /\.pdf(\?|#|$)/i.test(url);
 }
 
+function extractHttpStatusFromMessage(message) {
+    if (typeof message !== 'string') return null;
+    const match = message.match(/\bHTTP\s+(\d{3})\b/i);
+    if (!match) return null;
+    const code = Number(match[1]);
+    return Number.isFinite(code) ? code : null;
+}
+
+function hostFromUrl(url) {
+    try {
+        return new URL(url).host || null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function buildFallbackUploadErrorMessage(urlErr, fallbackErr, pdfUrl) {
+    const urlMsg = urlErr?.message || 'URL source blocked';
+    const fallbackMsg = fallbackErr?.message || 'fallback upload failed';
+    const fallbackStatus = extractHttpStatusFromMessage(fallbackMsg);
+
+    if (fallbackStatus === 401 || fallbackStatus === 403) {
+        const host = hostFromUrl(pdfUrl);
+        const hostText = host ? ` (${host})` : '';
+        return `Source site blocked automated PDF download${hostText} (HTTP ${fallbackStatus}). Download the PDF manually and retry with "Upload Local PDF" or "Choose Different PDF". URL source error: ${urlMsg}.`;
+    }
+
+    if (/does not appear to be a PDF/i.test(fallbackMsg)) {
+        return `The detected URL did not return a real PDF file. Open the direct PDF URL or retry with "Upload Local PDF". URL source error: ${urlMsg}. Fallback detail: ${fallbackMsg}.`;
+    }
+
+    return `${urlMsg}; fallback upload failed: ${fallbackMsg}`;
+}
+
 function decodeFilenameValue(raw) {
     if (!raw) return null;
     let value = String(raw).trim();
@@ -844,9 +878,7 @@ async function runPipeline(pdfUrl, pageUrl, uploadFile = null, sourceType = 'pdf
                         stepDetail: `URL blocked. Fallback upload succeeded (${fallbackFile.filename}).`
                     });
                 } catch (fallbackErr) {
-                    const urlMsg = urlErr?.message || 'URL source blocked';
-                    const fallbackMsg = fallbackErr?.message || 'fallback upload failed';
-                    throw new Error(`${urlMsg}; fallback upload failed: ${fallbackMsg}`);
+                    throw new Error(buildFallbackUploadErrorMessage(urlErr, fallbackErr, pdfUrl));
                 }
             }
         }
