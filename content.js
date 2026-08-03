@@ -16,22 +16,34 @@
 
     const currentUrl = window.location.href;
 
+    function detectSourceTitle() {
+        const candidates = [
+            document.querySelector('meta[name="citation_title"]')?.content,
+            document.querySelector('meta[property="og:title"]')?.content,
+            document.querySelector('h1.title')?.textContent?.replace(/^Title:\s*/i, ''),
+            document.title,
+        ];
+        const title = candidates.find(value => typeof value === 'string' && value.trim());
+        return title ? title.replace(/\s+/g, ' ').trim() : null;
+    }
+
     /**
      * Detect if the current page is a PDF or has PDF links.
      * Returns { isPdf, pdfUrl, pageUrl, source }
      */
     function detectPdf() {
         const pageUrl = currentUrl;
+        const sourceTitle = detectSourceTitle();
 
         // Strategy 1: Current URL ends with .pdf
         if (/\.pdf(\?.*)?$/i.test(currentUrl)) {
-            return { isPdf: true, pdfUrl: currentUrl, pageUrl, source: 'direct_pdf_url' };
+            return { isPdf: true, pdfUrl: currentUrl, pageUrl, source: 'direct_pdf_url', sourceTitle };
         }
 
         // Strategy 2: Embedded PDF viewer (Chrome shows PDFs in <embed>)
         const embed = document.querySelector('embed[type="application/pdf"]');
         if (embed) {
-            return { isPdf: true, pdfUrl: embed.src || currentUrl, pageUrl, source: 'embedded_pdf' };
+            return { isPdf: true, pdfUrl: embed.src || currentUrl, pageUrl, source: 'embedded_pdf', sourceTitle };
         }
 
         // Strategy 3: arXiv abstract page -> construct PDF link
@@ -40,13 +52,13 @@
         if (arxivAbsMatch) {
             const arxivId = arxivAbsMatch[1] + (arxivAbsMatch[2] || '');
             const pdfUrl = `https://arxiv.org/pdf/${arxivId}`;
-            return { isPdf: true, pdfUrl, pageUrl, source: 'arxiv_abstract' };
+            return { isPdf: true, pdfUrl, pageUrl, source: 'arxiv_abstract', sourceTitle };
         }
 
         // Strategy 4: arXiv PDF page
         const arxivPdfMatch = currentUrl.match(/^https?:\/\/arxiv\.org\/pdf\/([\d.]+)/);
         if (arxivPdfMatch) {
-            return { isPdf: true, pdfUrl: currentUrl, pageUrl, source: 'arxiv_pdf' };
+            return { isPdf: true, pdfUrl: currentUrl, pageUrl, source: 'arxiv_pdf', sourceTitle };
         }
 
         // Strategy 5: Any link on the page that points to a PDF
@@ -69,6 +81,7 @@
                 pdfUrl: arxivPdfLink.href,
                 pageUrl,
                 source: 'arxiv_link',
+                sourceTitle,
             };
         }
 
@@ -79,11 +92,12 @@
                 pdfUrl: pdfLinks[0].url,
                 pageUrl,
                 source: 'page_link',
+                sourceTitle,
                 allPdfLinks: pdfLinks,
             };
         }
 
-        return { isPdf: false, pdfUrl: null, pageUrl, source: null };
+        return { isPdf: false, pdfUrl: null, pageUrl, source: null, sourceTitle };
     }
 
     // Run detection and send result to background

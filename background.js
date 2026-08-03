@@ -49,6 +49,7 @@ import {
     SlideDeckLength,
     InfographicOrientation,
     InfographicDetail,
+    InfographicStyle,
     SourceStatus,
 } from './notebooklm-api.js';
 
@@ -66,9 +67,10 @@ const INITIAL_STATE = {
     pdfUrl: null,
     sourceType: 'pdf',       // pdf | webpage
     pageUrl: null,
+    sourceTitle: null,
     notebookId: null,
     notebookUrl: null,
-    notebookTitle: null,     // auto-generated title fetched after source ingestion
+    notebookTitle: null,
     sourceId: null,
     tasks: [],               // [{ type, taskId, status }] for each artifact being generated
     error: null,
@@ -108,6 +110,15 @@ async function resetState() {
 
 function isWebpageSourceType(sourceType) {
     return sourceType === 'webpage';
+}
+
+function normalizeSourceTitle(value) {
+    if (typeof value !== 'string') return '';
+    const title = value.replace(/\s+/g, ' ').trim()
+        .replace(/^\[[\d.]+(?:v\d+)?\]\s*/, '')
+        .replace(/\s*[|\-]\s*arXiv(?:\.org)?\s*$/i, '')
+        .trim();
+    return title && !/^untitled$/i.test(title) ? title.substring(0, 300) : '';
 }
 
 function getSourceLabel(sourceType) {
@@ -286,8 +297,9 @@ const DEFAULT_SETTINGS = {
     // Video
     generateVideo: false,
     videoFormat: 'explainer',   // 'explainer'|'brief'
-    videoStyle: 'auto',        // 'auto'|'classic'|'whiteboard'|'kawaii'|'anime'|'watercolor'|'retro_print'|'heritage'|'paper_craft'
+    videoStyle: 'auto',        // 'auto'|'custom'|'classic'|'whiteboard'|'kawaii'|'anime'|'watercolor'|'retro_print'|'heritage'|'paper_craft'
     videoPrompt: '',
+    videoStylePrompt: '',
     // Report
     generateReport: false,
     reportFormat: 'study_guide', // 'briefing_doc'|'study_guide'|'blog_post'|'custom'
@@ -304,6 +316,8 @@ const DEFAULT_SETTINGS = {
     generateInfographic: true,
     infographicOrientation: 'landscape', // 'landscape'|'portrait'|'square'
     infographicDetail: 'standard',       // 'concise'|'standard'|'detailed'
+    infographicStylePreset: 'auto',
+    infographicNativeStyle: 'auto',
     infographicPrompt: '',
     // Slide deck
     generateSlideDeck: false,
@@ -319,6 +333,7 @@ const DEFAULT_SETTINGS = {
     notificationEnabled: true,
     chimeEnabled: true,
     autoOpenNotebook: false,
+    useSourceTitleForNotebook: true,
 };
 
 async function getSettings() {
@@ -337,7 +352,7 @@ function resolveVideoFormat(s) {
     return { explainer: VideoFormat.EXPLAINER, brief: VideoFormat.BRIEF }[s] ?? VideoFormat.EXPLAINER;
 }
 function resolveVideoStyle(s) {
-    const map = { auto: VideoStyle.AUTO_SELECT, classic: VideoStyle.CLASSIC, whiteboard: VideoStyle.WHITEBOARD, kawaii: VideoStyle.KAWAII, anime: VideoStyle.ANIME, watercolor: VideoStyle.WATERCOLOR, retro_print: VideoStyle.RETRO_PRINT, heritage: VideoStyle.HERITAGE, paper_craft: VideoStyle.PAPER_CRAFT };
+    const map = { auto: VideoStyle.AUTO_SELECT, custom: VideoStyle.CUSTOM, classic: VideoStyle.CLASSIC, whiteboard: VideoStyle.WHITEBOARD, kawaii: VideoStyle.KAWAII, anime: VideoStyle.ANIME, watercolor: VideoStyle.WATERCOLOR, retro_print: VideoStyle.RETRO_PRINT, heritage: VideoStyle.HERITAGE, paper_craft: VideoStyle.PAPER_CRAFT };
     return map[s] ?? VideoStyle.AUTO_SELECT;
 }
 function resolveQuizQuantity(s) {
@@ -360,6 +375,49 @@ function resolveInfographicOrientation(s) {
 }
 function resolveInfographicDetail(s) {
     return { concise: InfographicDetail.CONCISE, standard: InfographicDetail.STANDARD, detailed: InfographicDetail.DETAILED }[s] ?? InfographicDetail.STANDARD;
+}
+function resolveInfographicStyle(s) {
+    const map = {
+        auto: InfographicStyle.AUTO_SELECT,
+        sketch_note: InfographicStyle.SKETCH_NOTE,
+        professional: InfographicStyle.PROFESSIONAL,
+        bento_grid: InfographicStyle.BENTO_GRID,
+        editorial: InfographicStyle.EDITORIAL,
+        instructional: InfographicStyle.INSTRUCTIONAL,
+        bricks: InfographicStyle.BRICKS,
+        clay: InfographicStyle.CLAY,
+        anime: InfographicStyle.ANIME,
+        kawaii: InfographicStyle.KAWAII,
+        scientific: InfographicStyle.SCIENTIFIC,
+    };
+    return map[s] ?? InfographicStyle.AUTO_SELECT;
+}
+
+const INFOGRAPHIC_STYLE_PRESET_PROMPTS = {
+    auto: '',
+    editorial: 'Use an editorial infographic style with polished typography, balanced whitespace, and a magazine-like layout.',
+    minimal: 'Use a minimal infographic style with restrained colors, simple icons, and clean visual hierarchy.',
+    data_dense: 'Use a data-dense analytical infographic style with compact charts, annotated callouts, and evidence-forward layout.',
+    playful: 'Use a playful infographic style with bold color accents, approachable illustrations, and friendly labeling.',
+    technical: 'Use a technical infographic style with diagram-like structure, precise annotations, and blueprint-inspired composition.',
+    timeline: 'Use a timeline-centric infographic style with clear chronology, milestone callouts, and directional flow.',
+    comparison: 'Use a comparison infographic style with side-by-side sections, explicit contrasts, and grouped evidence.',
+    poster: 'Use a poster-style infographic with a strong headline, a dominant hero visual, and a few high-impact takeaways.',
+};
+
+function buildInfographicInstructions(settings) {
+    const parts = [];
+    const preset = INFOGRAPHIC_STYLE_PRESET_PROMPTS[settings.infographicStylePreset] || '';
+    const prompt = typeof settings.infographicPrompt === 'string' ? settings.infographicPrompt.trim() : '';
+
+    if (preset) {
+        parts.push(preset);
+    }
+    if (prompt) {
+        parts.push(prompt);
+    }
+
+    return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
 function sleep(ms) {
@@ -606,10 +664,11 @@ async function tickSourcePoll(state) {
                 type: 'infographic',
                 fn: () => generateInfographic(
                     state.notebookId, sourceIds,
-                    'en',
+                    settings.language,
                     resolveInfographicOrientation(settings.infographicOrientation),
                     resolveInfographicDetail(settings.infographicDetail),
-                    settings.infographicPrompt || null
+                    resolveInfographicStyle(settings.infographicNativeStyle),
+                    buildInfographicInstructions(settings)
                 ),
             },
             {
@@ -620,7 +679,8 @@ async function tickSourcePoll(state) {
                     resolveVideoFormat(settings.videoFormat),
                     resolveVideoStyle(settings.videoStyle),
                     settings.videoPrompt || null,
-                    settings.language
+                    settings.language,
+                    settings.videoStylePrompt || null
                 ),
             },
             {
@@ -791,10 +851,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // Pipeline orchestration (steps 1-3: synchronous network calls)
 // =========================================================================
 
-async function runPipeline(pdfUrl, pageUrl, uploadFile = null, sourceType = 'pdf') {
+async function runPipeline(pdfUrl, pageUrl, uploadFile = null, sourceType = 'pdf', sourceTitle = null) {
     const effectiveSourceType = uploadFile ? 'pdf' : (sourceType || 'pdf');
     const sourceLabel = getSourceLabel(effectiveSourceType);
     const ingestionLabel = getIngestionLabel(effectiveSourceType);
+    const detectedTitle = normalizeSourceTitle(sourceTitle);
     console.log(`[Pipeline] Starting for ${sourceLabel}: ${pdfUrl}`);
 
     let notebookId = null;
@@ -810,6 +871,7 @@ async function runPipeline(pdfUrl, pageUrl, uploadFile = null, sourceType = 'pdf
             pdfUrl,
             sourceType: effectiveSourceType,
             pageUrl,
+            sourceTitle: detectedTitle || null,
             notebookId: null,
             notebookUrl: null,
             notebookTitle: null,
@@ -825,7 +887,9 @@ async function runPipeline(pdfUrl, pageUrl, uploadFile = null, sourceType = 'pdf
         await setState({ step: 'create_notebook', stepDetail: 'Creating notebook...' });
 
         // Step 2: Create notebook
-        const notebook = await createNotebook('');
+        const settings = await getSettings();
+        const requestedNotebookTitle = settings.useSourceTitleForNotebook !== false ? detectedTitle : '';
+        const notebook = await createNotebook(requestedNotebookTitle);
         if (!notebook.id) throw new Error('Failed to create notebook -- no ID returned');
         notebookId = notebook.id;
 
@@ -917,7 +981,13 @@ async function runPipeline(pdfUrl, pageUrl, uploadFile = null, sourceType = 'pdf
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'START_PIPELINE') {
         chrome.alarms.clear(ALARM_NAME);
-        runPipeline(message.pdfUrl, message.pageUrl, null, message.sourceType || 'pdf');
+        runPipeline(
+            message.pdfUrl,
+            message.pageUrl,
+            null,
+            message.sourceType || 'pdf',
+            message.sourceTitle || null
+        );
         sendResponse({ ok: true, message: 'Pipeline started' });
         return false;
     }
@@ -936,7 +1006,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 mimeType: message.mimeType || 'application/pdf',
                 fileData: message.fileDataBase64,
             },
-            'pdf'
+            'pdf',
+            message.sourceTitle || null
         );
         sendResponse({ ok: true, message: 'Pipeline started' });
         return false;

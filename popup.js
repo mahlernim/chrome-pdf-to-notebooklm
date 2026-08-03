@@ -26,23 +26,25 @@ const STEPS = [
 const DEFAULTS = {
     generateAudio: true,
     audioFormat: 'deep_dive', audioLength: 'long', language: 'en', audioPrompt: '',
-    generateVideo: false, videoFormat: 'explainer', videoStyle: 'auto', videoPrompt: '',
+    generateVideo: false, videoFormat: 'explainer', videoStyle: 'auto', videoPrompt: '', videoStylePrompt: '',
     generateReport: false, reportFormat: 'study_guide', reportPrompt: '',
     generateQuiz: false, quizQuantity: 'standard', quizDifficulty: 'medium', quizPrompt: '',
     generateFlashcards: false, flashcardsPrompt: '',
     generateInfographic: true,
-    infographicOrientation: 'landscape', infographicDetail: 'standard', infographicPrompt: '',
+    infographicOrientation: 'landscape', infographicDetail: 'standard', infographicStylePreset: 'auto', infographicNativeStyle: 'auto', infographicPrompt: '',
     generateSlideDeck: false, slideDeckFormat: 'detailed_deck', slideDeckLength: 'default', slideDeckPrompt: '',
     generateMindMap: false,
     generateDataTable: false, dataTablePrompt: '',
     notificationEnabled: true,
-    chimeEnabled: true, autoOpenNotebook: false,
+    chimeEnabled: true, autoOpenNotebook: false, useSourceTitleForNotebook: true,
 };
 
 const SELECT_MAP = {
     's-audioFormat': 'audioFormat',
     's-language': 'language',
     's-videoStyle': 'videoStyle',
+    's-infographicStylePreset': 'infographicStylePreset',
+    's-infographicNativeStyle': 'infographicNativeStyle',
 };
 const RADIO_NAMES = [
     'audioLength', 'videoFormat', 'reportFormat',
@@ -69,10 +71,12 @@ const TOGGLE_MAP = {
     's-notificationEnabled': 'notificationEnabled',
     's-chimeEnabled': 'chimeEnabled',
     's-autoOpenNotebook': 'autoOpenNotebook',
+    's-useSourceTitleForNotebook': 'useSourceTitleForNotebook',
 };
 const TEXTAREA_MAP = {
     's-audioPrompt': 'audioPrompt',
     's-videoPrompt': 'videoPrompt',
+    's-videoStylePrompt': 'videoStylePrompt',
     's-reportPrompt': 'reportPrompt',
     's-quizPrompt': 'quizPrompt',
     's-flashcardsPrompt': 'flashcardsPrompt',
@@ -231,7 +235,7 @@ function wireSettingsListeners() {
         });
     }
     // Non-artifact toggles (chime, auto-open) -- no validation needed
-    ['s-notificationEnabled', 's-chimeEnabled', 's-autoOpenNotebook'].forEach(id => {
+    ['s-notificationEnabled', 's-chimeEnabled', 's-autoOpenNotebook', 's-useSourceTitleForNotebook'].forEach(id => {
         document.getElementById(id)?.addEventListener('change', saveSettings);
     });
     // Textareas (debounced)
@@ -270,30 +274,61 @@ async function init() {
 // PDF Detection
 // =========================================================================
 
+function cleanDetectedTitle(value) {
+    if (typeof value !== 'string') return null;
+    const title = value.replace(/\s+/g, ' ').trim()
+        .replace(/^\[[\d.]+(?:v\d+)?\]\s*/, '')
+        .replace(/\s*[|\-]\s*arXiv(?:\.org)?\s*$/i, '')
+        .trim();
+    return title && !/^untitled$/i.test(title) ? title.substring(0, 300) : null;
+}
+
+async function detectSourceTitleFromTab(tab) {
+    if (!tab?.id) return cleanDetectedTitle(tab?.title);
+    try {
+        const injected = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+                const candidates = [
+                    document.querySelector('meta[name="citation_title"]')?.content,
+                    document.querySelector('meta[property="og:title"]')?.content,
+                    document.querySelector('h1.title')?.textContent?.replace(/^Title:\s*/i, ''),
+                    document.title,
+                ];
+                return candidates.find(value => typeof value === 'string' && value.trim()) || null;
+            },
+        });
+        return cleanDetectedTitle(injected?.[0]?.result) || cleanDetectedTitle(tab.title);
+    } catch (_) {
+        return cleanDetectedTitle(tab.title);
+    }
+}
+
 async function detectAndRender() {
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab?.url) {
             const url = tab.url;
+            const sourceTitle = await detectSourceTitleFromTab(tab);
             if (/\.pdf(\?.*)?$/i.test(url)) {
                 const source = /^https?:\/\//i.test(url) ? 'direct_url' : 'local_file';
-                renderDetection({ isPdf: true, pdfUrl: url, pageUrl: url, source });
+                renderDetection({ isPdf: true, pdfUrl: url, pageUrl: url, source, sourceTitle });
                 return;
             }
             const arxivAbsMatch = url.match(/^https?:\/\/arxiv\.org\/abs\/([\d.]+)(v\d+)?/);
             if (arxivAbsMatch) {
                 const pdfUrl = `https://arxiv.org/pdf/${arxivAbsMatch[1]}${arxivAbsMatch[2] || ''}`;
-                renderDetection({ isPdf: true, pdfUrl, pageUrl: url, source: 'arxiv_abstract' });
+                renderDetection({ isPdf: true, pdfUrl, pageUrl: url, source: 'arxiv_abstract', sourceTitle });
                 return;
             }
             if (/arxiv\.org\/pdf\//.test(url)) {
-                renderDetection({ isPdf: true, pdfUrl: url, pageUrl: url, source: 'arxiv_pdf' });
+                renderDetection({ isPdf: true, pdfUrl: url, pageUrl: url, source: 'arxiv_pdf', sourceTitle });
                 return;
             }
             const arxivHtmlMatch = url.match(/^https?:\/\/arxiv\.org\/html\/([\d.]+)(v\d+)?/);
             if (arxivHtmlMatch) {
                 const pdfUrl = `https://arxiv.org/pdf/${arxivHtmlMatch[1]}${arxivHtmlMatch[2] || ''}`;
-                renderDetection({ isPdf: true, pdfUrl, pageUrl: url, source: 'arxiv_html' });
+                renderDetection({ isPdf: true, pdfUrl, pageUrl: url, source: 'arxiv_html', sourceTitle });
                 return;
             }
         }
@@ -353,7 +388,7 @@ function renderDetection(data) {
       <div class="pdf-source">via ${escapeHtml(sourceLabel)}</div>
     </div>
     <button class="btn-generate" id="btn-start">🎧 Generate Artifacts</button>`;
-    document.getElementById('btn-start').addEventListener('click', () => startPipeline(data.pdfUrl, data.pageUrl));
+    document.getElementById('btn-start').addEventListener('click', () => startPipeline(data.pdfUrl, data.pageUrl, 'pdf', data.sourceTitle));
 }
 
 function renderNoPdf() {
@@ -442,10 +477,10 @@ function renderProgress(state) {
 // Pipeline control
 // =========================================================================
 
-async function startPipeline(pdfUrl, pageUrl, sourceType = 'pdf') {
+async function startPipeline(pdfUrl, pageUrl, sourceType = 'pdf', sourceTitle = null) {
     const btn = document.getElementById('btn-start') || document.getElementById('btn-start-url');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Starting...'; }
-    await chrome.runtime.sendMessage({ type: 'START_PIPELINE', pdfUrl, pageUrl, sourceType });
+    await chrome.runtime.sendMessage({ type: 'START_PIPELINE', pdfUrl, pageUrl, sourceType, sourceTitle });
     await new Promise(r => setTimeout(r, 300));
     const state = await getState();
     renderProgress(state);
@@ -462,7 +497,8 @@ async function startPipelineFromCurrentPageUrl() {
         if (!/^https?:\/\//i.test(currentUrl)) {
             throw new Error('Current tab is not an http(s) webpage URL.');
         }
-        await startPipeline(currentUrl, currentUrl, 'webpage');
+        const sourceTitle = await detectSourceTitleFromTab(tab);
+        await startPipeline(currentUrl, currentUrl, 'webpage', sourceTitle);
     } catch (err) {
         console.warn('[Popup] Could not start webpage URL pipeline:', err?.message || err);
         if (btn) { btn.disabled = false; btn.textContent = 'Use Current Webpage URL'; }
@@ -476,7 +512,7 @@ async function abortPipeline() {
     await detectAndRender();
 }
 
-async function startPipelineFile(file, pageUrl) {
+async function startPipelineFile(file, pageUrl, sourceTitle = null) {
     const btn = document.getElementById('btn-upload-start') || document.getElementById('btn-upload-manual');
     if (btn) { btn.disabled = true; btn.textContent = 'Uploading...'; }
     const fileDataBase64 = await readFileAsBase64(file);
@@ -485,6 +521,7 @@ async function startPipelineFile(file, pageUrl) {
         fileName: file.name || 'local-upload.pdf',
         mimeType: file.type || 'application/pdf',
         fileDataBase64, pageUrl,
+        sourceTitle: sourceTitle || cleanDetectedTitle(file.name.replace(/\.pdf$/i, '')),
     });
     await new Promise(r => setTimeout(r, 300));
     const state = await getState();
@@ -604,6 +641,7 @@ async function startPipelineFromCurrentTabPdf(pageUrl) {
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab?.id) throw new Error('No active tab');
+        const sourceTitle = await detectSourceTitleFromTab(tab);
 
         let payload = await tryDirectTabPdfRead(tab);
 
@@ -683,6 +721,7 @@ async function startPipelineFromCurrentTabPdf(pageUrl) {
             mimeType: payload.mimeType || 'application/pdf',
             fileDataBase64: payload.fileDataBase64,
             pageUrl: pageUrl || payload.sourceUrl || null,
+            sourceTitle,
         });
         await new Promise(r => setTimeout(r, 300));
         const state = await getState();

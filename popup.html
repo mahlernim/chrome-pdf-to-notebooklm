@@ -708,6 +708,7 @@
             <span class="s-label">Visual style</span>
             <select id="s-videoStyle" class="s-select">
               <option value="auto">Auto Select</option>
+              <option value="custom">Custom</option>
               <option value="classic">Classic</option>
               <option value="whiteboard">Whiteboard</option>
               <option value="kawaii">Kawaii</option>
@@ -722,6 +723,11 @@
             <span class="s-label">Custom instructions</span>
             <textarea id="s-videoPrompt" class="s-textarea"
               placeholder="e.g. Use a documentary style with emphasis on visuals."></textarea>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Custom visual style prompt</span>
+            <textarea id="s-videoStylePrompt" class="s-textarea"
+              placeholder="Used when Visual style is Custom."></textarea>
           </div>
         </div>
       </div>
@@ -751,7 +757,7 @@
             </div>
           </div>
           <div class="s-field">
-            <span class="s-label">Custom instructions <span id="report-prompt-required"
+            <span class="s-label">Instructions <span style="color:var(--text-dim)">(appended for built-in formats)</span> <span id="report-prompt-required"
                 style="color:var(--warning);display:none">(required for Custom format)</span></span>
             <textarea id="s-reportPrompt" class="s-textarea"
               placeholder="e.g. Write a clinical summary for non-specialist physicians."></textarea>
@@ -851,6 +857,36 @@
             </div>
           </div>
           <div class="s-field">
+            <span class="s-label">Layout preset</span>
+            <select id="s-infographicStylePreset" class="s-select">
+              <option value="auto">Auto</option>
+              <option value="editorial">Editorial</option>
+              <option value="minimal">Minimal</option>
+              <option value="data_dense">Data Dense</option>
+              <option value="playful">Playful</option>
+              <option value="technical">Technical</option>
+              <option value="timeline">Timeline</option>
+              <option value="comparison">Comparison</option>
+              <option value="poster">Poster</option>
+            </select>
+          </div>
+          <div class="s-field">
+            <span class="s-label">Visual style</span>
+            <select id="s-infographicNativeStyle" class="s-select">
+              <option value="auto">Auto Select</option>
+              <option value="sketch_note">Sketch Note</option>
+              <option value="professional">Professional</option>
+              <option value="bento_grid">Bento Grid</option>
+              <option value="editorial">Editorial</option>
+              <option value="instructional">Instructional</option>
+              <option value="bricks">Bricks</option>
+              <option value="clay">Clay</option>
+              <option value="anime">Anime</option>
+              <option value="kawaii">Kawaii</option>
+              <option value="scientific">Scientific</option>
+            </select>
+          </div>
+          <div class="s-field">
             <span class="s-label">Custom instructions</span>
             <textarea id="s-infographicPrompt" class="s-textarea"
               placeholder="e.g. Use a horizontal timeline layout with large icons."></textarea>
@@ -935,6 +971,13 @@
           <span class="s-section-arrow">▾</span>
         </div>
           <div class="s-section-content">
+          <div class="s-toggle-row" style="margin-bottom:8px">
+            <span class="s-toggle-label">Use detected paper title for notebook</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="s-useSourceTitleForNotebook">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
           <div class="s-toggle-row" style="margin-bottom:8px">
             <span class="s-toggle-label">Desktop notifications</span>
             <label class="toggle-switch">

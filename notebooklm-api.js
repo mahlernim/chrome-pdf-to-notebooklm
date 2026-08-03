@@ -59,15 +59,15 @@ const VideoFormat = {
 // Video visual style options
 const VideoStyle = {
   AUTO_SELECT: 1,
-  CUSTOM: 2,
-  CLASSIC: 3,
-  WHITEBOARD: 4,
-  KAWAII: 5,
-  ANIME: 6,
-  WATERCOLOR: 7,
+  CUSTOM: 0,
+  CLASSIC: 2,
+  WHITEBOARD: 3,
+  KAWAII: 9,
+  ANIME: 7,
+  WATERCOLOR: 6,
   RETRO_PRINT: 8,
-  HERITAGE: 9,
-  PAPER_CRAFT: 10,
+  HERITAGE: 4,
+  PAPER_CRAFT: 5,
 };
 
 // Quiz/flashcard quantity options
@@ -117,6 +117,21 @@ const InfographicDetail = {
   DETAILED: 3,
 };
 
+// Infographic visual style options. These values are distinct from VideoStyle.
+const InfographicStyle = {
+  AUTO_SELECT: 1,
+  SKETCH_NOTE: 2,
+  PROFESSIONAL: 3,
+  BENTO_GRID: 4,
+  EDITORIAL: 5,
+  INSTRUCTIONAL: 6,
+  BRICKS: 7,
+  CLAY: 8,
+  ANIME: 9,
+  KAWAII: 10,
+  SCIENTIFIC: 11,
+};
+
 // Artifact status codes
 const ArtifactStatus = {
   PROCESSING: 1,
@@ -130,7 +145,7 @@ const SourceStatus = {
   PROCESSING: 1,
   READY: 2,
   ERROR: 3,
-  PREPARING: 4,
+  PREPARING: 5,
 };
 
 // =========================================================================
@@ -139,6 +154,34 @@ const SourceStatus = {
 
 let _csrfToken = null;
 let _sessionId = null;
+let _retrySleep = sleep;
+let _mutationTimeoutMs = 15000;
+
+const READ_ONLY_RPC_METHODS = new Set([
+  RPCMethod.GET_NOTEBOOK,
+  RPCMethod.LIST_ARTIFACTS,
+]);
+
+const MAX_READ_ATTEMPTS = 3;
+
+function requestTemplateOptions() {
+  return [
+    2,
+    null,
+    null,
+    [1, null, null, null, null, null, null, null, null, null, [1]],
+  ];
+}
+
+function artifactClientOptions() {
+  return [
+    2,
+    null,
+    null,
+    [1, null, null, null, null, null, null, null, null, null, [1]],
+    [[1, 4, 8, 2, 3, 6]],
+  ];
+}
 
 /**
  * Fetch CSRF token (SNlM0e) and session ID (FdrFJe) from NotebookLM homepage.
@@ -394,35 +437,138 @@ function extractFirstIdFromResult(result) {
 // Core RPC call
 // =========================================================================
 
+function retryDelayMs(response, failedAttempt) {
+  const retryAfter = response?.headers?.get?.('retry-after');
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, 10000);
+    }
+    const dateMs = Date.parse(retryAfter);
+    if (Number.isFinite(dateMs)) {
+      return Math.min(Math.max(0, dateMs - Date.now()), 10000);
+    }
+  }
+  return Math.min(1000 * (2 ** failedAttempt), 10000);
+}
+
+function mutationUncertainError(methodId, detail) {
+  const error = new Error(
+    `TRANSIENT_MUTATION_UNCERTAIN: ${detail} The ${methodId} request was not retried to avoid creating duplicate data.`
+  );
+  error.code = 'TRANSIENT_MUTATION_UNCERTAIN';
+  return error;
+}
+
 async function rpcCall(methodId, params, sourcePath = '/', allowNull = false) {
-  const { csrfToken, sessionId } = await ensureTokens();
+  const isReadOnly = READ_ONLY_RPC_METHODS.has(methodId);
+  const maxAttempts = isReadOnly ? MAX_READ_ATTEMPTS : 1;
+  let transientAttempt = 0;
+  let authRetried = false;
 
-  const rpcRequest = encodeRpcRequest(methodId, params);
-  const body = buildRequestBody(rpcRequest, csrfToken);
-  const urlParams = buildUrlParams(methodId, sourcePath, sessionId);
-  const url = `${BATCHEXECUTE_URL}?${urlParams.toString()}`;
+  while (transientAttempt < maxAttempts) {
+    const { csrfToken, sessionId } = await ensureTokens();
+    const rpcRequest = encodeRpcRequest(methodId, params);
+    const body = buildRequestBody(rpcRequest, csrfToken);
+    const urlParams = buildUrlParams(methodId, sourcePath, sessionId);
+    const url = `${BATCHEXECUTE_URL}?${urlParams.toString()}`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-    },
-    body: body,
-  });
+    let response;
+    let responseText;
+    const abortController = !isReadOnly && typeof AbortController !== 'undefined'
+      ? new AbortController()
+      : null;
+    let timeoutId = abortController
+      ? setTimeout(() => abortController.abort(), _mutationTimeoutMs)
+      : null;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        },
+        body,
+        ...(abortController ? { signal: abortController.signal } : {}),
+      });
 
-  if (!response.ok) {
-    // If 401/403, tokens may be expired -- refetch
+      // Receiving headers confirms that NotebookLM accepted the request. Stop
+      // the transport abort timer so a slow streamed body cannot cancel a
+      // mutation that the server is still committing.
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+
+      if (response.ok) {
+        if (isReadOnly) {
+          responseText = await response.text();
+        } else {
+          let bodyTimeoutId;
+          try {
+            responseText = await Promise.race([
+              response.text(),
+              new Promise((resolve, reject) => {
+                bodyTimeoutId = setTimeout(() => {
+                  const timeoutError = new Error('Mutation response body timed out');
+                  timeoutError.name = 'MutationResponseTimeout';
+                  reject(timeoutError);
+                }, _mutationTimeoutMs);
+              }),
+            ]);
+          } finally {
+            if (bodyTimeoutId !== undefined) clearTimeout(bodyTimeoutId);
+          }
+        }
+      }
+    } catch (error) {
+      if (!isReadOnly) {
+        const detail = error?.name === 'AbortError' || error?.name === 'MutationResponseTimeout'
+          ? `No complete response was received within ${Math.round(_mutationTimeoutMs / 1000)} seconds.`
+          : `Network failure: ${error?.message || 'request failed'}.`;
+        throw mutationUncertainError(methodId, detail);
+      }
+      transientAttempt++;
+      if (transientAttempt >= maxAttempts) {
+        throw new Error(`NETWORK_ERROR: ${methodId} failed after ${maxAttempts} attempts: ${error?.message || 'request failed'}`);
+      }
+      await _retrySleep(retryDelayMs(null, transientAttempt - 1));
+      continue;
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    }
+
     if (response.status === 401 || response.status === 403) {
+      if (authRetried) {
+        throw new Error('AUTH_REQUIRED: NotebookLM authentication failed after refreshing the session. Sign in again and retry.');
+      }
+      authRetried = true;
       _csrfToken = null;
       _sessionId = null;
-      throw new Error('AUTH_EXPIRED: Authentication expired. Retrying...');
+      await fetchTokens();
+      continue;
     }
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+    if (response.status === 429 || response.status >= 500) {
+      if (!isReadOnly) {
+        throw mutationUncertainError(methodId, `NotebookLM returned HTTP ${response.status}.`);
+      }
+      transientAttempt++;
+      if (transientAttempt >= maxAttempts) {
+        throw new Error(`HTTP ${response.status}: ${methodId} failed after ${maxAttempts} attempts.`);
+      }
+      await _retrySleep(retryDelayMs(response, transientAttempt - 1));
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return decodeResponse(responseText, methodId, allowNull);
   }
 
-  const text = await response.text();
-  return decodeResponse(text, methodId, allowNull);
+  throw new Error(`RPC ${methodId} exhausted its retry budget.`);
 }
 
 // =========================================================================
@@ -434,7 +580,7 @@ async function rpcCall(methodId, params, sourcePath = '/', allowNull = false) {
  * Returns { id, title }
  */
 async function createNotebook(title = '') {
-  const params = [title, null, null, [2], [1]];
+  const params = [title, null, null, requestTemplateOptions()];
   const result = await rpcCall(RPCMethod.CREATE_NOTEBOOK, params);
 
   // Parse notebook from response
@@ -502,8 +648,7 @@ async function registerFileSource(notebookId, filename) {
   const params = [
     [[filename]],
     notebookId,
-    [2],
-    [1, null, null, null, null, null, null, null, null, null, [1]],
+    requestTemplateOptions(),
   ];
 
   const result = await rpcCall(
@@ -520,7 +665,7 @@ async function registerFileSource(notebookId, filename) {
   return String(sourceId);
 }
 
-async function startResumableUpload(notebookId, filename, fileSize, sourceId) {
+async function startResumableUpload(notebookId, filename, fileSize, sourceId, mimeType) {
   const response = await fetch(`${UPLOAD_URL}?authuser=0`, {
     method: 'POST',
     credentials: 'include',
@@ -530,6 +675,7 @@ async function startResumableUpload(notebookId, filename, fileSize, sourceId) {
       'x-goog-authuser': '0',
       'x-goog-upload-command': 'start',
       'x-goog-upload-header-content-length': String(fileSize),
+      'x-goog-upload-header-content-type': mimeType || 'application/pdf',
       'x-goog-upload-protocol': 'resumable',
     },
     body: JSON.stringify({
@@ -585,7 +731,7 @@ async function addFileSource(notebookId, filename, fileData, mimeType = 'applica
   }
 
   const sourceId = await registerFileSource(notebookId, filename);
-  const uploadUrl = await startResumableUpload(notebookId, filename, binaryPayload.byteLength, sourceId);
+  const uploadUrl = await startResumableUpload(notebookId, filename, binaryPayload.byteLength, sourceId, mimeType);
   await uploadFileBytes(uploadUrl, binaryPayload, mimeType);
 
   console.log(`[NotebookLM API] Uploaded file source: ${sourceId} (${filename})`);
@@ -598,17 +744,39 @@ async function addFileSource(notebookId, filename, fileData, mimeType = 'applica
  */
 async function addUrlSource(notebookId, url) {
   const params = [
-    [[null, null, [url], null, null, null, null, null]],
+    [[null, null, [url], null, null, null, null, null, null, null, 1]],
     notebookId,
-    [2],
-    null,
-    null,
+    requestTemplateOptions(),
   ];
 
-  const result = await rpcCall(
-    RPCMethod.ADD_SOURCE, params,
-    `/notebook/${notebookId}`
-  );
+  let result;
+  try {
+    result = await rpcCall(
+      RPCMethod.ADD_SOURCE, params,
+      `/notebook/${notebookId}`
+    );
+  } catch (error) {
+    if (error?.code !== 'TRANSIENT_MUTATION_UNCERTAIN') throw error;
+
+    // The server can commit an ADD_SOURCE mutation while its streaming response
+    // remains open. Reconcile through a safe read instead of resending the
+    // mutation, which would risk creating a duplicate source.
+    try {
+      for (let probeAttempt = 0; probeAttempt < 3; probeAttempt++) {
+        const sources = await listSources(notebookId);
+        const committedSource = sources.find(source => source.url === url || source.title === url);
+        if (committedSource) {
+          console.warn('[NotebookLM API] Source mutation response was incomplete; recovered the committed source.');
+          return committedSource;
+        }
+        if (probeAttempt < 2) await _retrySleep(2000);
+      }
+    } catch (probeError) {
+      console.warn('[NotebookLM API] Could not reconcile the uncertain source mutation:', probeError.message);
+    }
+
+    throw error;
+  }
 
   // Parse source from response (shape can drift over time)
   let sourceId = extractFirstIdFromResult(result);
@@ -630,7 +798,7 @@ async function addUrlSource(notebookId, url) {
  * List all sources in a notebook and return their IDs + statuses.
  */
 async function listSources(notebookId) {
-  const params = [notebookId, null, [2], null, 0];
+  const params = [notebookId, null, requestTemplateOptions(), null, 0];
   const result = await rpcCall(
     RPCMethod.GET_NOTEBOOK, params,
     `/notebook/${notebookId}`
@@ -645,6 +813,16 @@ async function listSources(notebookId) {
         const rawSrcId = Array.isArray(src[0]) ? src[0][0] : src[0];
         const srcId = extractFirstIdFromResult(rawSrcId) || extractFirstIdFromResult(src) || rawSrcId;
         const title = src.length > 1 ? src[1] : null;
+        const metadata = Array.isArray(src[2]) ? src[2] : null;
+        const urlCandidates = metadata ? [metadata[7], metadata[5], metadata[0]] : [];
+        let sourceUrl = null;
+        for (const candidate of urlCandidates) {
+          const value = Array.isArray(candidate) ? candidate.find(item => typeof item === 'string') : candidate;
+          if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
+            sourceUrl = value;
+            break;
+          }
+        }
 
         // Extract status from src[3][1]
         let status = SourceStatus.READY;
@@ -652,7 +830,7 @@ async function listSources(notebookId) {
           status = src[3][1];
         }
 
-        sources.push({ id: String(srcId), title, status });
+        sources.push({ id: String(srcId), title, url: sourceUrl, status });
       }
     }
   }
@@ -773,7 +951,7 @@ async function generateAudio(notebookId, sourceIds = null, language = 'en', audi
   const sourceIdsDouble = sourceIds.map(sid => [sid]);
 
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -822,7 +1000,8 @@ async function generateVideo(
   videoFormat = VideoFormat.EXPLAINER,
   videoStyle = VideoStyle.AUTO_SELECT,
   instructions = null,
-  language = 'en'
+  language = 'en',
+  stylePrompt = null
 ) {
   if (!sourceIds) {
     sourceIds = await getSourceIds(notebookId);
@@ -831,8 +1010,25 @@ async function generateVideo(
   const sourceIdsTriple = sourceIds.map(sid => [[sid]]);
   const sourceIdsDouble = sourceIds.map(sid => [sid]);
 
+  if (videoStyle === VideoStyle.CUSTOM && !String(stylePrompt || '').trim()) {
+    throw new Error('Custom video style requires a visual style prompt.');
+  }
+
+  const styleCode = videoStyle === VideoStyle.CUSTOM ? null : videoStyle;
+  const videoConfig = [
+    sourceIdsDouble,
+    language,
+    instructions || null,
+    null,
+    videoFormat || null,
+    styleCode ?? null,
+  ];
+  if (videoStyle === VideoStyle.CUSTOM && stylePrompt) {
+    videoConfig.push(stylePrompt);
+  }
+
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -846,14 +1042,7 @@ async function generateVideo(
       [
         null,
         null,
-        [
-          sourceIdsDouble,
-          language,
-          instructions || null,
-          null,
-          videoFormat || null,
-          videoStyle || null,
-        ],
+        videoConfig,
       ],
     ],
   ];
@@ -914,11 +1103,14 @@ async function generateReport(
   };
 
   const config = formatConfigs[reportFormat] || formatConfigs[ReportFormat.STUDY_GUIDE];
+  const prompt = reportFormat === ReportFormat.CUSTOM
+    ? config.prompt
+    : (instructions ? `${config.prompt}\n\n${instructions}` : config.prompt);
   const sourceIdsTriple = sourceIds.map(sid => [[sid]]);
   const sourceIdsDouble = sourceIds.map(sid => [sid]);
 
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -936,7 +1128,7 @@ async function generateReport(
           null,
           sourceIdsDouble,
           language,
-          config.prompt,
+          prompt,
           null,
           true,
         ],
@@ -970,7 +1162,7 @@ async function generateQuiz(notebookId, sourceIds = null, quantity = QuizQuantit
   const sourceIdsTriple = sourceIds.map(sid => [[sid]]);
 
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -1022,7 +1214,7 @@ async function generateFlashcards(notebookId, sourceIds = null, quantity = QuizQ
   const sourceIdsTriple = sourceIds.map(sid => [[sid]]);
 
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -1081,7 +1273,7 @@ async function generateSlideDeck(
   const sourceIdsTriple = sourceIds.map(sid => [[sid]]);
 
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -1200,7 +1392,7 @@ async function generateDataTable(notebookId, sourceIds = null, instructions = nu
   const sourceIdsTriple = sourceIds.map(sid => [[sid]]);
 
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -1244,13 +1436,22 @@ async function generateDataTable(notebookId, sourceIds = null, instructions = nu
  * Generate an infographic.
  * @param {string} notebookId
  * @param {string[]|null} sourceIds
- * @param {string} language  e.g. 'en' (only 'en' works reliably)
+ * @param {string} language  e.g. 'en'
  * @param {number} orientation  InfographicOrientation.*
  * @param {number} detail  InfographicDetail.*
+ * @param {number} style  InfographicStyle.*
  * @param {string|null} instructions  Optional custom prompt.
  * Returns { taskId, status }
  */
-async function generateInfographic(notebookId, sourceIds = null, language = 'en', orientation = InfographicOrientation.LANDSCAPE, detail = InfographicDetail.STANDARD, instructions = null) {
+async function generateInfographic(
+  notebookId,
+  sourceIds = null,
+  language = 'en',
+  orientation = InfographicOrientation.LANDSCAPE,
+  detail = InfographicDetail.STANDARD,
+  style = InfographicStyle.AUTO_SELECT,
+  instructions = null
+) {
   if (!sourceIds) {
     sourceIds = await getSourceIds(notebookId);
   }
@@ -1258,7 +1459,7 @@ async function generateInfographic(notebookId, sourceIds = null, language = 'en'
   const sourceIdsTriple = sourceIds.map(sid => [[sid]]);
 
   const params = [
-    [2],
+    artifactClientOptions(),
     notebookId,
     [
       null,
@@ -1282,6 +1483,7 @@ async function generateInfographic(notebookId, sourceIds = null, language = 'en'
           null,
           orientation || null,
           detail || null,
+          style || InfographicStyle.AUTO_SELECT,
         ],
       ],
     ],
@@ -1332,6 +1534,58 @@ function parseGenerationResult(result) {
   return { taskId: String(taskId), status };
 }
 
+function isValidMediaUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+function findInfographicUrl(artifact) {
+  for (const item of [...artifact].reverse()) {
+    if (!Array.isArray(item) || item.length <= 2) continue;
+    const content = item[2];
+    if (!Array.isArray(content) || content.length === 0) continue;
+    const firstContent = content[0];
+    if (!Array.isArray(firstContent) || firstContent.length <= 1) continue;
+    const imageData = firstContent[1];
+    if (!Array.isArray(imageData) || imageData.length === 0) continue;
+    if (isValidMediaUrl(imageData[0])) {
+      return imageData[0];
+    }
+  }
+  return null;
+}
+
+function isMediaArtifactReady(artifact, typeCode) {
+  try {
+    switch (typeCode) {
+      case ArtifactTypeCode.AUDIO: {
+        const mediaList = artifact?.[6]?.[5];
+        return Array.isArray(mediaList)
+          && mediaList.length > 0
+          && Array.isArray(mediaList[0])
+          && isValidMediaUrl(mediaList[0][0]);
+      }
+      case ArtifactTypeCode.VIDEO: {
+        const mediaList = artifact?.[8];
+        return Array.isArray(mediaList)
+          && mediaList.some(item => Array.isArray(item) && isValidMediaUrl(item[0]));
+      }
+      case ArtifactTypeCode.INFOGRAPHIC:
+        return !!findInfographicUrl(artifact);
+      case ArtifactTypeCode.SLIDE_DECK:
+        return isValidMediaUrl(artifact?.[16]?.[3]);
+      default:
+        return true;
+    }
+  } catch (_) {
+    return ![
+      ArtifactTypeCode.AUDIO,
+      ArtifactTypeCode.VIDEO,
+      ArtifactTypeCode.INFOGRAPHIC,
+      ArtifactTypeCode.SLIDE_DECK,
+    ].includes(typeCode);
+  }
+}
+
 async function listArtifactStatuses(notebookId) {
   const params = [[2], notebookId, 'NOT artifact.status = "ARTIFACT_STATUS_SUGGESTED"'];
   const result = await rpcCall(
@@ -1349,7 +1603,7 @@ async function listArtifactStatuses(notebookId) {
 
   for (const art of artifactsData) {
     if (!Array.isArray(art) || art.length === 0) continue;
-    const artifactId = String(art[0]);
+    const artifactId = String(extractFirstIdFromResult(art[0]) || art[0]);
     const statusCode = art.length > 4 ? art[4] : 0;
     const typeCode = art.length > 2 ? art[2] : 0;
 
@@ -1357,7 +1611,9 @@ async function listArtifactStatuses(notebookId) {
     switch (statusCode) {
       case ArtifactStatus.PROCESSING: status = 'in_progress'; break;
       case ArtifactStatus.PENDING: status = 'pending'; break;
-      case ArtifactStatus.COMPLETED: status = 'completed'; break;
+      case ArtifactStatus.COMPLETED:
+        status = isMediaArtifactReady(art, typeCode) ? 'completed' : 'in_progress';
+        break;
       case ArtifactStatus.FAILED: status = 'failed'; break;
       default: status = 'unknown';
     }
@@ -1425,7 +1681,7 @@ function sleep(ms) {
  */
 async function getNotebookTitle(notebookId) {
   // Params modeled after notebooklm-py GET_NOTEBOOK usage
-  const params = [notebookId, null, [2], null, 0];
+  const params = [notebookId, null, requestTemplateOptions(), null, 0];
   let result;
   try {
     result = await rpcCall(
@@ -1492,5 +1748,24 @@ export {
   SlideDeckLength,
   InfographicOrientation,
   InfographicDetail,
+  InfographicStyle,
   SourceStatus,
+};
+
+// Internal hooks used only by the deterministic Node test suite.
+export const __testing = {
+  RPCMethod,
+  requestTemplateOptions,
+  artifactClientOptions,
+  rpcCall,
+  resetTokens() {
+    _csrfToken = null;
+    _sessionId = null;
+  },
+  setRetrySleep(fn) {
+    _retrySleep = typeof fn === 'function' ? fn : sleep;
+  },
+  setMutationTimeout(ms) {
+    _mutationTimeoutMs = Number.isFinite(ms) && ms >= 0 ? ms : 15000;
+  },
 };

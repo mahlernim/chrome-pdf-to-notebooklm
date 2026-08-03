@@ -17,6 +17,9 @@ Turn a PDF, arXiv page, or webpage into a NotebookLM notebook and generate artif
 - 백그라운드 진행: 팝업을 닫아도 진행 상태 유지
 - 로컬 PDF 업로드 지원: 필요 시 파일 선택으로 업로드
 - 아티팩트 설정 제공: Audio/Infographic 등 생성 옵션 조절
+- NotebookLM 최신 요청 형식 지원: 노트북/소스 생성 및 아티팩트 생성 호환성 개선
+- 인포그래픽 레이아웃 프리셋과 NotebookLM 기본 비주얼 스타일을 별도로 선택
+- 감지된 논문 제목을 노트북 제목으로 사용하며, Experience 설정에서 끌 수 있음
 
 ### 설치 (개발자 모드)
 1. 이 저장소를 다운로드 또는 클론합니다.
@@ -57,6 +60,9 @@ Turn a PDF, arXiv page, or webpage into a NotebookLM notebook and generate artif
 - Background progress: keeps running even when the popup is closed
 - Local PDF upload support with fallback file picker
 - Artifact settings for Audio/Infographic and more
+- Current NotebookLM request compatibility for notebook, source, and artifact generation
+- Separate infographic layout presets and native NotebookLM visual styles
+- Uses the detected paper title as the notebook title by default, with an opt-out in Experience settings
 
 ### Install (Developer Mode)
 1. Download or clone this repository.
