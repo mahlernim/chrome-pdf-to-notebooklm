@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chrome PDF to NotebookLM",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Detect PDF/web sources and generate NotebookLM artifacts from Chrome",
   "permissions": [
     "activeTab",
@@ -13,6 +13,7 @@
     "alarms"
   ],
   "host_permissions": [
+    "https://notebook.google.com/*",
     "https://notebooklm.google.com/*",
     "file:///*",
     "*://*/*"

@@ -5,7 +5,9 @@ import {
   __testing,
   addFileSource,
   addUrlSource,
+  ArtifactStatus,
   createNotebook,
+  fetchTokens,
   generateAudio,
   generateDataTable,
   generateFlashcards,
@@ -14,11 +16,14 @@ import {
   generateReport,
   generateSlideDeck,
   generateVideo,
+  getNotebookUrl,
   InfographicDetail,
   InfographicOrientation,
   InfographicStyle,
   listArtifactStatuses,
   listSources,
+  QuizDifficulty,
+  QuizQuantity,
   VideoFormat,
   VideoStyle,
 } from '../notebooklm-api.js';
@@ -38,8 +43,8 @@ function mockResponse({ status = 200, body = '', headers = {}, url = 'https://no
   };
 }
 
-function tokenResponse(token = 'csrf-token') {
-  return mockResponse({ body: `"SNlM0e":"${token}","FdrFJe":"session-id"` });
+function tokenResponse(token = 'csrf-token', url = 'https://notebook.google.com/') {
+  return mockResponse({ body: `"SNlM0e":"${token}","FdrFJe":"session-id"`, url });
 }
 
 function rpcResponse(methodId, result) {
@@ -51,6 +56,10 @@ function decodeRpcParams(options) {
   const body = new URLSearchParams(options.body);
   const request = JSON.parse(body.get('f.req'));
   return JSON.parse(request[0][0][1]);
+}
+
+function sourceRow(id, url) {
+  return [[id], url, [null, null, null, null, null, null, null, [url]], [null, 2]];
 }
 
 function installFetch(handler) {
@@ -117,6 +126,58 @@ test('visual style enums match the current NotebookLM wire values', () => {
   });
 });
 
+test('artifact status and quiz quantity enums match current wire values', () => {
+  assert.deepEqual(ArtifactStatus, {
+    UNKNOWN: 0,
+    PENDING: 1,
+    PROCESSING: 2,
+    COMPLETED: 3,
+    FAILED: 4,
+    SUGGESTED: 5,
+    PENDING_REVIEW: 6,
+  });
+  assert.deepEqual(QuizQuantity, {
+    FEWER: 1,
+    STANDARD: 2,
+    MORE: 3,
+  });
+});
+
+test('authentication prefers the renamed NotebookLM host', async () => {
+  const calls = installFetch(url => {
+    assert.equal(url, 'https://notebook.google.com/');
+    return tokenResponse('new-host-token', url);
+  });
+
+  await fetchTokens();
+  assert.equal(calls.length, 1);
+  assert.equal(__testing.getBaseUrl(), 'https://notebook.google.com');
+  assert.equal(getNotebookUrl('notebook-id'), 'https://notebook.google.com/notebook/notebook-id');
+});
+
+test('authentication falls back to the supported legacy host', async () => {
+  const calls = installFetch(url => {
+    if (url === 'https://notebook.google.com/') {
+      return mockResponse({
+        body: TOKEN_HTML,
+        url: 'https://accounts.google.com/ServiceLogin',
+      });
+    }
+    if (url === 'https://notebooklm.google.com/') {
+      return tokenResponse('legacy-host-token', url);
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  await fetchTokens();
+  assert.deepEqual(calls.map(call => call.url), [
+    'https://notebook.google.com/',
+    'https://notebooklm.google.com/',
+  ]);
+  assert.equal(__testing.getBaseUrl(), 'https://notebooklm.google.com');
+  assert.equal(getNotebookUrl('notebook-id'), 'https://notebooklm.google.com/notebook/notebook-id');
+});
+
 test('notebook creation uses the migrated template block', async () => {
   let params;
   installFetch((url, options) => {
@@ -134,6 +195,10 @@ test('URL source addition uses the migrated source spec and template block', asy
   let params;
   installFetch((url, options) => {
     if (url.endsWith('/')) return tokenResponse();
+    const methodId = new URL(url).searchParams.get('rpcids');
+    if (methodId === __testing.RPCMethod.GET_NOTEBOOK) {
+      return rpcResponse(__testing.RPCMethod.GET_NOTEBOOK, [[null, []]]);
+    }
     params = decodeRpcParams(options);
     return rpcResponse(__testing.RPCMethod.ADD_SOURCE, [['source-id-12345']]);
   });
@@ -181,17 +246,107 @@ test('URL source addition reconciles a committed mutation after its response sta
   assert.equal(probeCount, 2);
 });
 
+test('URL source recovery ignores a matching source that predates the mutation', async () => {
+  const sourceUrl = 'https://example.com/repeated-source';
+  __testing.setMutationTimeout(1);
+  let getNotebookCalls = 0;
+  let addSourceCalls = 0;
+
+  installFetch((url) => {
+    if (url.endsWith('/')) return tokenResponse();
+    const methodId = new URL(url).searchParams.get('rpcids');
+    if (methodId === __testing.RPCMethod.GET_NOTEBOOK) {
+      getNotebookCalls++;
+      const oldSource = sourceRow('source-id-old', sourceUrl);
+      const sources = [oldSource];
+      if (getNotebookCalls > 1) {
+        sources.push(sourceRow('source-id-new', sourceUrl));
+      }
+      return rpcResponse(__testing.RPCMethod.GET_NOTEBOOK, [[null, sources]]);
+    }
+    if (methodId === __testing.RPCMethod.ADD_SOURCE) {
+      addSourceCalls++;
+      const response = mockResponse();
+      response.text = async () => new Promise(() => {});
+      return response;
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  const source = await addUrlSource('notebook-id-12345', sourceUrl);
+  assert.equal(source.id, 'source-id-new');
+  assert.equal(addSourceCalls, 1);
+  assert.equal(getNotebookCalls, 2);
+});
+
+test('URL source recovery does not report an older match as newly created', async () => {
+  const sourceUrl = 'https://example.com/existing-only';
+  let getNotebookCalls = 0;
+  let addSourceCalls = 0;
+
+  installFetch(url => {
+    if (url.endsWith('/')) return tokenResponse();
+    const methodId = new URL(url).searchParams.get('rpcids');
+    if (methodId === __testing.RPCMethod.GET_NOTEBOOK) {
+      getNotebookCalls++;
+      return rpcResponse(
+        __testing.RPCMethod.GET_NOTEBOOK,
+        [[null, [sourceRow('source-id-old', sourceUrl)]]]
+      );
+    }
+    if (methodId === __testing.RPCMethod.ADD_SOURCE) {
+      addSourceCalls++;
+      return mockResponse({ status: 503 });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  await assert.rejects(
+    () => addUrlSource('notebook-id-12345', sourceUrl),
+    error => error.code === 'TRANSIENT_MUTATION_UNCERTAIN'
+  );
+  assert.equal(addSourceCalls, 1);
+  assert.equal(getNotebookCalls, 4);
+});
+
+test('URL source recovery refuses an ambiguous set of new matches', async () => {
+  const sourceUrl = 'https://example.com/ambiguous';
+  let getNotebookCalls = 0;
+
+  installFetch(url => {
+    if (url.endsWith('/')) return tokenResponse();
+    const methodId = new URL(url).searchParams.get('rpcids');
+    if (methodId === __testing.RPCMethod.GET_NOTEBOOK) {
+      getNotebookCalls++;
+      const sources = getNotebookCalls === 1
+        ? []
+        : [sourceRow('source-id-one', sourceUrl), sourceRow('source-id-two', sourceUrl)];
+      return rpcResponse(__testing.RPCMethod.GET_NOTEBOOK, [[null, sources]]);
+    }
+    if (methodId === __testing.RPCMethod.ADD_SOURCE) {
+      return mockResponse({ status: 503 });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+
+  await assert.rejects(
+    () => addUrlSource('notebook-id-12345', sourceUrl),
+    error => error.code === 'SOURCE_RECOVERY_AMBIGUOUS'
+  );
+  assert.equal(getNotebookCalls, 2);
+});
+
 test('file upload registers with the migrated block and sends the MIME type', async () => {
   let registerParams;
   let uploadStartHeaders;
   let finalized = false;
   installFetch((url, options) => {
-    if (url === 'https://notebooklm.google.com/') return tokenResponse();
+    if (url === 'https://notebook.google.com/') return tokenResponse();
     if (url.includes('batchexecute')) {
       registerParams = decodeRpcParams(options);
       return rpcResponse(__testing.RPCMethod.ADD_SOURCE_FILE, [['source-id-12345']]);
     }
-    if (url.startsWith('https://notebooklm.google.com/upload/_/')) {
+    if (url.startsWith('https://notebook.google.com/upload/_/')) {
       uploadStartHeaders = options.headers;
       return mockResponse({ headers: { 'x-goog-upload-url': 'https://upload.example/finalize' } });
     }
@@ -235,6 +390,27 @@ test('all CREATE_ARTIFACT builders use the full capability envelope', async () =
   for (const params of captured) {
     assert.deepEqual(params[0], __testing.artifactClientOptions());
   }
+});
+
+test('quiz and flashcard options serialize as quantity then difficulty', async () => {
+  const captured = [];
+  installFetch((url, options) => {
+    if (url.endsWith('/')) return tokenResponse();
+    captured.push(decodeRpcParams(options));
+    return rpcResponse(__testing.RPCMethod.CREATE_ARTIFACT, [['artifact-id-12345']]);
+  });
+
+  await generateQuiz(
+    'notebook-id-12345', ['source-id-12345'],
+    QuizQuantity.MORE, QuizDifficulty.HARD
+  );
+  await generateFlashcards(
+    'notebook-id-12345', ['source-id-12345'],
+    QuizQuantity.FEWER, QuizDifficulty.HARD
+  );
+
+  assert.deepEqual(captured[0][2][9][1][7], [3, 3]);
+  assert.deepEqual(captured[1][2][9][1][6], [1, 3]);
 });
 
 test('video styles use corrected wire values and custom prompt serialization', async () => {
@@ -390,4 +566,22 @@ test('completed media waits for its URL before reporting completion', async () =
   const ready = await listArtifactStatuses('notebook-id-12345');
   assert.equal(settling.get('artifact-id-12345').status, 'in_progress');
   assert.equal(ready.get('artifact-id-12345').status, 'completed');
+});
+
+test('artifact status 1 is pending and status 2 is processing', async () => {
+  let rpcAttempts = 0;
+  installFetch(url => {
+    if (url.endsWith('/')) return tokenResponse();
+    rpcAttempts++;
+    const artifact = [];
+    artifact[0] = 'artifact-id-12345';
+    artifact[2] = 2;
+    artifact[4] = rpcAttempts;
+    return rpcResponse(__testing.RPCMethod.LIST_ARTIFACTS, [[artifact]]);
+  });
+
+  const pending = await listArtifactStatuses('notebook-id-12345');
+  const processing = await listArtifactStatuses('notebook-id-12345');
+  assert.equal(pending.get('artifact-id-12345').status, 'pending');
+  assert.equal(processing.get('artifact-id-12345').status, 'in_progress');
 });

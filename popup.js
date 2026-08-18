@@ -29,7 +29,7 @@ const DEFAULTS = {
     generateVideo: false, videoFormat: 'explainer', videoStyle: 'auto', videoPrompt: '', videoStylePrompt: '',
     generateReport: false, reportFormat: 'study_guide', reportPrompt: '',
     generateQuiz: false, quizQuantity: 'standard', quizDifficulty: 'medium', quizPrompt: '',
-    generateFlashcards: false, flashcardsPrompt: '',
+    generateFlashcards: false, flashcardsQuantity: 'standard', flashcardsDifficulty: 'medium', flashcardsPrompt: '',
     generateInfographic: true,
     infographicOrientation: 'landscape', infographicDetail: 'standard', infographicStylePreset: 'auto', infographicNativeStyle: 'auto', infographicPrompt: '',
     generateSlideDeck: false, slideDeckFormat: 'detailed_deck', slideDeckLength: 'default', slideDeckPrompt: '',
@@ -49,6 +49,7 @@ const SELECT_MAP = {
 const RADIO_NAMES = [
     'audioLength', 'videoFormat', 'reportFormat',
     'quizQuantity', 'quizDifficulty',
+    'flashcardsQuantity', 'flashcardsDifficulty',
     'infographicOrientation', 'infographicDetail',
     'slideDeckFormat', 'slideDeckLength',
 ];

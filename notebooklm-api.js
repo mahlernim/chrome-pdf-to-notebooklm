@@ -5,9 +5,18 @@
  * Uses fetch() with credentials from browser cookies.
  */
 
-const BATCHEXECUTE_URL = 'https://notebooklm.google.com/_/LabsTailwindUi/data/batchexecute';
-const HOMEPAGE_URL = 'https://notebooklm.google.com/';
-const UPLOAD_URL = 'https://notebooklm.google.com/upload/_/';
+const DEFAULT_BASE_URL = 'https://notebook.google.com';
+const LEGACY_BASE_URL = 'https://notebooklm.google.com';
+const PERSONAL_BASE_URLS = [DEFAULT_BASE_URL, LEGACY_BASE_URL];
+let _baseUrl = DEFAULT_BASE_URL;
+
+function appUrl(path = '/') {
+  return `${_baseUrl}${path}`;
+}
+
+function getNotebookUrl(notebookId) {
+  return appUrl(`/notebook/${notebookId}`);
+}
 
 // RPC Method IDs (reverse-engineered from notebooklm-py rpc/types.py)
 const RPCMethod = {
@@ -74,6 +83,7 @@ const VideoStyle = {
 const QuizQuantity = {
   FEWER: 1,
   STANDARD: 2,
+  MORE: 3,
 };
 
 // Quiz/flashcard difficulty options
@@ -134,10 +144,13 @@ const InfographicStyle = {
 
 // Artifact status codes
 const ArtifactStatus = {
-  PROCESSING: 1,
-  PENDING: 2,
+  UNKNOWN: 0,
+  PENDING: 1,
+  PROCESSING: 2,
   COMPLETED: 3,
   FAILED: 4,
+  SUGGESTED: 5,
+  PENDING_REVIEW: 6,
 };
 
 // Source status codes
@@ -188,38 +201,53 @@ function artifactClientOptions() {
  * Since we're in a Chrome extension, browser cookies are sent automatically.
  */
 async function fetchTokens() {
-  const response = await fetch(HOMEPAGE_URL, {
-    credentials: 'include',
-    redirect: 'follow',
-  });
+  const candidates = [_baseUrl, ...PERSONAL_BASE_URLS.filter(url => url !== _baseUrl)];
+  const failures = [];
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch NotebookLM homepage: ${response.status}`);
-  }
+  for (const baseUrl of candidates) {
+    const homepageUrl = `${baseUrl}/`;
+    try {
+      const response = await fetch(homepageUrl, {
+        credentials: 'include',
+        redirect: 'follow',
+      });
 
-  const html = await response.text();
+      if (!response.ok) {
+        failures.push(`${baseUrl} returned HTTP ${response.status}`);
+        continue;
+      }
 
-  // Extract CSRF token: "SNlM0e":"<token>"
-  const csrfMatch = html.match(/"SNlM0e"\s*:\s*"([^"]+)"/);
-  if (!csrfMatch) {
-    // Check if redirected to login
-    if (response.url.includes('accounts.google.com')) {
-      throw new Error('AUTH_REQUIRED: Not logged in to Google. Please sign in to NotebookLM first.');
+      const responseHost = new URL(response.url || homepageUrl).hostname;
+      const allowedHosts = PERSONAL_BASE_URLS.map(url => new URL(url).hostname);
+      if (!allowedHosts.includes(responseHost)) {
+        failures.push(`${baseUrl} redirected to ${responseHost}`);
+        continue;
+      }
+
+      const html = await response.text();
+      const csrfMatch = html.match(/"SNlM0e"\s*:\s*"([^"]+)"/);
+      const sessionMatch = html.match(/"FdrFJe"\s*:\s*"([^"]+)"/);
+      if (!csrfMatch || !sessionMatch) {
+        failures.push(`${baseUrl} did not provide an authenticated NotebookLM session`);
+        continue;
+      }
+
+      _baseUrl = PERSONAL_BASE_URLS.find(
+        url => new URL(url).hostname === responseHost
+      ) || baseUrl;
+      _csrfToken = csrfMatch[1];
+      _sessionId = sessionMatch[1];
+
+      console.log(`[NotebookLM API] Tokens fetched successfully from ${responseHost}`);
+      return { csrfToken: _csrfToken, sessionId: _sessionId };
+    } catch (error) {
+      failures.push(`${baseUrl} failed: ${error?.message || 'request failed'}`);
     }
-    throw new Error('CSRF token (SNlM0e) not found in NotebookLM page. Auth may be expired.');
   }
 
-  // Extract session ID: "FdrFJe":"<session_id>"
-  const sessionMatch = html.match(/"FdrFJe"\s*:\s*"([^"]+)"/);
-  if (!sessionMatch) {
-    throw new Error('Session ID (FdrFJe) not found in NotebookLM page.');
-  }
-
-  _csrfToken = csrfMatch[1];
-  _sessionId = sessionMatch[1];
-
-  console.log('[NotebookLM API] Tokens fetched successfully');
-  return { csrfToken: _csrfToken, sessionId: _sessionId };
+  throw new Error(
+    `AUTH_REQUIRED: Could not find an authenticated NotebookLM session. Sign in at ${DEFAULT_BASE_URL} and retry. ${failures.join('. ')}`
+  );
 }
 
 async function ensureTokens() {
@@ -471,7 +499,7 @@ async function rpcCall(methodId, params, sourcePath = '/', allowNull = false) {
     const rpcRequest = encodeRpcRequest(methodId, params);
     const body = buildRequestBody(rpcRequest, csrfToken);
     const urlParams = buildUrlParams(methodId, sourcePath, sessionId);
-    const url = `${BATCHEXECUTE_URL}?${urlParams.toString()}`;
+    const url = `${appUrl('/_/LabsTailwindUi/data/batchexecute')}?${urlParams.toString()}`;
 
     let response;
     let responseText;
@@ -666,7 +694,7 @@ async function registerFileSource(notebookId, filename) {
 }
 
 async function startResumableUpload(notebookId, filename, fileSize, sourceId, mimeType) {
-  const response = await fetch(`${UPLOAD_URL}?authuser=0`, {
+  const response = await fetch(`${appUrl('/upload/_/')}?authuser=0`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -743,6 +771,12 @@ async function addFileSource(notebookId, filename, fileData, mimeType = 'applica
  * Returns { id, title }
  */
 async function addUrlSource(notebookId, url) {
+  // Capture the existing source IDs before creating anything. URL values are
+  // not unique within a notebook, so an uncertainty probe must never adopt an
+  // older source that happens to use the same URL.
+  const baselineSourceIds = new Set(
+    (await listSources(notebookId)).map(source => String(source.id))
+  );
   const params = [
     [[null, null, [url], null, null, null, null, null, null, null, 1]],
     notebookId,
@@ -764,14 +798,25 @@ async function addUrlSource(notebookId, url) {
     try {
       for (let probeAttempt = 0; probeAttempt < 3; probeAttempt++) {
         const sources = await listSources(notebookId);
-        const committedSource = sources.find(source => source.url === url || source.title === url);
-        if (committedSource) {
+        const committedMatches = sources.filter(source =>
+          !baselineSourceIds.has(String(source.id))
+          && (source.url === url || source.title === url)
+        );
+        if (committedMatches.length === 1) {
           console.warn('[NotebookLM API] Source mutation response was incomplete; recovered the committed source.');
-          return committedSource;
+          return committedMatches[0];
+        }
+        if (committedMatches.length > 1) {
+          const ambiguous = new Error(
+            'SOURCE_RECOVERY_AMBIGUOUS: More than one new matching source appeared. Check the notebook before retrying.'
+          );
+          ambiguous.code = 'SOURCE_RECOVERY_AMBIGUOUS';
+          throw ambiguous;
         }
         if (probeAttempt < 2) await _retrySleep(2000);
       }
     } catch (probeError) {
+      if (probeError?.code === 'SOURCE_RECOVERY_AMBIGUOUS') throw probeError;
       console.warn('[NotebookLM API] Could not reconcile the uncertain source mutation:', probeError.message);
     }
 
@@ -1236,8 +1281,8 @@ async function generateFlashcards(notebookId, sourceIds = null, quantity = QuizQ
           null,
           null,
           [
-            difficulty || null,
-            quantity || null,
+            quantity || QuizQuantity.STANDARD,
+            difficulty || QuizDifficulty.MEDIUM,
           ],
         ],
       ],
@@ -1527,6 +1572,12 @@ function parseGenerationResult(result) {
     case ArtifactStatus.FAILED:
       status = 'failed';
       break;
+    case ArtifactStatus.SUGGESTED:
+      status = 'suggested';
+      break;
+    case ArtifactStatus.PENDING_REVIEW:
+      status = 'pending_review';
+      break;
     default:
       status = 'in_progress';
   }
@@ -1615,6 +1666,8 @@ async function listArtifactStatuses(notebookId) {
         status = isMediaArtifactReady(art, typeCode) ? 'completed' : 'in_progress';
         break;
       case ArtifactStatus.FAILED: status = 'failed'; break;
+      case ArtifactStatus.SUGGESTED: status = 'suggested'; break;
+      case ArtifactStatus.PENDING_REVIEW: status = 'pending_review'; break;
       default: status = 'unknown';
     }
 
@@ -1716,6 +1769,7 @@ async function getNotebookTitle(notebookId) {
 export {
   fetchTokens,
   ensureTokens,
+  getNotebookUrl,
   createNotebook,
   deleteNotebook,
   addUrlSource,
@@ -1761,6 +1815,10 @@ export const __testing = {
   resetTokens() {
     _csrfToken = null;
     _sessionId = null;
+    _baseUrl = DEFAULT_BASE_URL;
+  },
+  getBaseUrl() {
+    return _baseUrl;
   },
   setRetrySleep(fn) {
     _retrySleep = typeof fn === 'function' ? fn : sleep;
