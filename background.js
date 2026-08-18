@@ -22,6 +22,7 @@
 
 import {
     fetchTokens,
+    getNotebookUrl,
     createNotebook,
     deleteNotebook,
     addUrlSource,
@@ -306,11 +307,13 @@ const DEFAULT_SETTINGS = {
     reportPrompt: '',
     // Quiz
     generateQuiz: false,
-    quizQuantity: 'standard',    // 'fewer'|'standard'
+    quizQuantity: 'standard',    // 'fewer'|'standard'|'more'
     quizDifficulty: 'medium',      // 'easy'|'medium'|'hard'
     quizPrompt: '',
     // Flashcards
     generateFlashcards: false,
+    flashcardsQuantity: 'standard',
+    flashcardsDifficulty: 'medium',
     flashcardsPrompt: '',
     // Infographic
     generateInfographic: true,
@@ -356,7 +359,7 @@ function resolveVideoStyle(s) {
     return map[s] ?? VideoStyle.AUTO_SELECT;
 }
 function resolveQuizQuantity(s) {
-    return { fewer: QuizQuantity.FEWER, standard: QuizQuantity.STANDARD }[s] ?? QuizQuantity.STANDARD;
+    return { fewer: QuizQuantity.FEWER, standard: QuizQuantity.STANDARD, more: QuizQuantity.MORE }[s] ?? QuizQuantity.STANDARD;
 }
 function resolveQuizDifficulty(s) {
     return { easy: QuizDifficulty.EASY, medium: QuizDifficulty.MEDIUM, hard: QuizDifficulty.HARD }[s] ?? QuizDifficulty.MEDIUM;
@@ -708,8 +711,8 @@ async function tickSourcePoll(state) {
                 type: 'flashcards',
                 fn: () => generateFlashcards(
                     state.notebookId, sourceIds,
-                    resolveQuizQuantity(settings.quizQuantity),
-                    resolveQuizDifficulty(settings.quizDifficulty),
+                    resolveQuizQuantity(settings.flashcardsQuantity),
+                    resolveQuizDifficulty(settings.flashcardsDifficulty),
                     settings.flashcardsPrompt || null
                 ),
             },
@@ -893,7 +896,7 @@ async function runPipeline(pdfUrl, pageUrl, uploadFile = null, sourceType = 'pdf
         if (!notebook.id) throw new Error('Failed to create notebook -- no ID returned');
         notebookId = notebook.id;
 
-        const notebookUrl = `https://notebooklm.google.com/notebook/${notebook.id}`;
+        const notebookUrl = getNotebookUrl(notebook.id);
         const sourceStepDetail = uploadFile
             ? `Uploading local PDF: ${uploadFile.filename}`
             : `Adding ${sourceLabel}: ${pdfUrl.substring(0, 60)}...`;
